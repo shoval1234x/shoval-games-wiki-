@@ -1,0 +1,1174 @@
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import {
+  initializeApp
+} from 'firebase/app';
+import {
+  getAuth,
+  signInAnonymously,
+  signInWithCustomToken,
+  onAuthStateChanged
+} from 'firebase/auth';
+import {
+  getFirestore,
+  doc,
+  getDoc,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  onSnapshot,
+  collection,
+  query,
+  where,
+  getDocs,
+  addDoc
+} from 'firebase/firestore';
+
+// --- הגדרות גלובליות ו-Firebase ---
+
+// המשתנים הגלובליים המסופקים על ידי סביבת הקנבס
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+// תיקון טעינת הקונפיגורציה
+const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+// הגדרת משתני Firebase
+let app: any = null, db: any = null, auth: any = null;
+if (firebaseConfig) {
+  try {
+    app = initializeApp(firebaseConfig);
+    db = getFirestore(app);
+    auth = getAuth(app);
+  } catch (e) {
+    console.error("Failed to initialize Firebase:", e);
+  }
+}
+
+// פונקציית עזר לפורמט תאריך (Timestamp)
+const formatDate = (timestamp: any, lang: string) => {
+  if (!timestamp) return 'לא נקבע';
+  const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+  return new Date(date).toLocaleDateString(lang === 'he' ? 'he-IL' : 'en-US');
+};
+
+// --- קונטקסט שפות (Multilingual Context) ---
+
+const translations = {
+  he: {
+    appTitle: "שובל גיימס Wiki",
+    login: "כניסה לחשבון",
+    register: "הרשמה חינם",
+    settings: "הגדרות",
+    transparencyBeta: "שקיפות (בטא)",
+    backToDefault: "חזרה לעברית", // ברירת המחדל היא עברית
+    home: "בית",
+    homeDescription: "האתר הוא מאגר ידע שיתופי למשחקי מחשב מכל הסוגים. הקטגוריות העיקריות כוללות משחקי אסטרטגיה מורכבים, משחקי תפקידים רחבי יריעה, משחקי פעולה אינטנסיביים, יריות תחרותיים, משחקי פלטפורמה קלאסיים וסימולציות מציאותיות.", // NEW DESCRIPTION
+    betaArticles: "מאמרי בטא",
+    myArticles: "המאמרים שלי", 
+    userArticles: "מאמרי משתמשים",
+    noUserArticles: "טרם נוצרו מאמרים על ידי משתמשים רשומים.",
+    editArticle: "ערוך מאמר",
+    createArticle: "צור מאמר חדש",
+    save: "שמור",
+    history: "היסטוריית גלישה",
+    email: "אימייל (חובה)",
+    username: "שם משתמש (חובה)",
+    dob: "תאריך לידה (לא חובה)",
+    gender: "מגדר (לא חובה)",
+    registerBtn: "הירשם",
+    requiredField: "שדה חובה",
+    articleContent: "תוכן המאמר",
+    articleTitle: "כותרת המאמר",
+    releaseDate: "תאריך יציאה (לא חובה)", 
+    notImplemented: "הפיצ'ר עדיין לא מומש במלואו.",
+    welcome: "ברוך הבא ל",
+    loggedInAs: "מחובר בתור",
+    categoryTitle: "נושא: ",
+    games: "משחקים",
+    strategy: "אסטרטגיה",
+    rpg: "משחקי תפקידים (RPG)",
+    action: "פעולה",
+    shooter: "יריות",
+    platformer: "פלטפורמה",
+    arcade: "ארקייד",
+    simulation: "סימולציה",
+    editModeHeader: "מצב עריכה - רק למשתמשים מאומתים",
+    viewHistoryTitle: "היסטוריית גלישה אישית",
+    noHistory: "אין פריטים בהיסטוריית הגלישה שלך.",
+    noMyArticles: "טרם יצרת מאמרים משלך. לחץ על 'צור מאמר חדש' כדי להתחיל!", 
+    betaInfo: "אזור מאמרי בטא - תוכן בפיתוח, נראה רק למשתמשים מאומתים.",
+    editSuccess: "המאמר נשמר בהצלחה!",
+    editError: "שגיאה בשמירת המאמר:",
+    registrationSuccess: "הרישום בוצע בהצלחה!",
+    registrationError: "שגיאה ברישום:",
+    loginRequired: "כדי לגשת לפיצ'ר זה, עליך להיות משתמש רשום ומאומת.", 
+    releaseDateRequiredForBeta: "חובה לקבוע תאריך יציאה כדי לסמן כ'מאמר בטא'.", 
+    noBetaArticles: "אין מאמרי בטא זמינים כרגע.", 
+    createdBy: "נוצר ע''י: ",
+  },
+  en: {
+    appTitle: "Shoval Games Wiki",
+    login: "Account Login",
+    register: "Free Registration",
+    settings: "Settings",
+    transparencyBeta: "Transparency (Beta)",
+    backToDefault: "Back to English",
+    home: "Home",
+    homeDescription: "This site is a collaborative knowledge base for computer games of all types. Key categories include complex strategy games, vast role-playing games, intense action games, competitive shooters, classic platformers, and realistic simulations.", // NEW DESCRIPTION
+    betaArticles: "Beta Articles",
+    myArticles: "My Articles", 
+    userArticles: "User Articles",
+    noUserArticles: "No articles have been created by registered users yet.",
+    editArticle: "Edit Article",
+    createArticle: "Create New Article",
+    save: "Save",
+    history: "Browsing History",
+    email: "Email (Required)",
+    username: "Username (Required)",
+    dob: "Date of Birth (Optional)",
+    gender: "Gender (Optional)",
+    registerBtn: "Register",
+    requiredField: "Required Field",
+    articleContent: "Article Content",
+    articleTitle: "Article Title",
+    releaseDate: "Release Date (Optional)", 
+    notImplemented: "This feature is not fully implemented yet.",
+    welcome: "Welcome to",
+    loggedInAs: "Logged in as",
+    categoryTitle: "Category: ",
+    games: "Games",
+    strategy: "Strategy",
+    rpg: "Role-Playing Games (RPG)",
+    action: "Action",
+    shooter: "Shooter",
+    platformer: "Platformer",
+    arcade: "Arcade",
+    simulation: "Simulation",
+    editModeHeader: "Edit Mode - Authenticated Users Only",
+    viewHistoryTitle: "Personal Browsing History",
+    noHistory: "No items in your browsing history.",
+    noMyArticles: "You haven't created any articles yet. Click 'Create New Article' to start!", 
+    betaInfo: "Beta Articles Area - Content in development, visible only to authenticated users.",
+    editSuccess: "Article saved successfully!",
+    editError: "Error saving article:",
+    registrationSuccess: "Registration successful!",
+    registrationError: "Error during registration:",
+    loginRequired: "To access this feature, you must be a registered and authenticated user.", 
+    releaseDateRequiredForBeta: "Release Date is required to mark as 'Beta Article'.", 
+    noBetaArticles: "No beta articles available currently.", 
+    createdBy: "Created by: ",
+  },
+  ar: {
+    appTitle: "ويكي ألعاب شوفال",
+    login: "تسجيل الدخول",
+    register: "التسجيل مجاني",
+    settings: "الإعدادات",
+    transparencyBeta: "الشفافية (تجريبي)",
+    backToDefault: "العودة إلى العربية",
+    home: "الصفحة الرئيسية",
+    homeDescription: "هذا الموقع هو قاعدة معرفية تعاونية لألعاب الكمبيوتر من جميع الأنواع. تشمل الفئات الرئيسية ألعاب الإستراتيجية المعقدة، وألعاب تقمص الأدوار الشاسعة، وألعاب الحركة المكثفة، وألعاب إطلاق النار التنافسية، ومنصات الألعاب الكلاسيكية، والمحاكاة الواقعية.", // NEW DESCRIPTION
+    betaArticles: "مقالات تجريبية",
+    myArticles: "مقالاتي", 
+    userArticles: "مقالات المستخدمين",
+    noUserArticles: "لم يتم إنشاء مقالات من قبل المستخدمين المسجلين بعد.",
+    editArticle: "تحرير مقالة",
+    createArticle: "إنشاء مقالة جديدة",
+    save: "حفظ",
+    history: "سجل التصفح",
+    email: "بريد إلكتروني (مطلوب)",
+    username: "اسم المستخدم (مطلوب)",
+    dob: "تاريخ الميلاد (اختياري)",
+    gender: "الجنس (اختياري)",
+    registerBtn: "سجل الآن",
+    requiredField: "حقل مطلوب",
+    articleContent: "محتوى المقالة",
+    articleTitle: "عنوان المقالة",
+    releaseDate: "تاريخ الإصدار (اختياري)", 
+    notImplemented: "هذه الميزة لم يتم تطبيقها بالكامل بعد.",
+    welcome: "مرحباً بك في",
+    loggedInAs: "تم تسجيل الدخول باسم",
+    categoryTitle: "الفئة: ",
+    games: "الألعاب",
+    strategy: "استراتيجية",
+    rpg: "ألعاب تقمص الأدوار (RPG)",
+    action: "حركة",
+    shooter: "إطلاق النار",
+    platformer: "منصات",
+    arcade: "أركيد",
+    simulation: "محاكاة",
+    editModeHeader: "وضع التحرير - للمستخدمين الموثقين فقط",
+    viewHistoryTitle: "سجل التصفح الشخصي",
+    noHistory: "لا توجد عناصر في سجل التصفح الخاص بك.",
+    noMyArticles: "لم تقم بإنشاء أي مقالات بعد. انقر على 'إنشاء مقالة جديدة' للبدأ!", 
+    betaInfo: "منطقة المقالات التجريبية - محتوى قيد التطوير, مرئي فقط للمستخدمين الموثقين.",
+    editSuccess: "تم حفظ المقالة بنجاح!",
+    editError: "خطأ في حفظ المقالة:",
+    registrationSuccess: "تم التسجيل بنجاح!",
+    registrationError: "خطأ أثناء التسجيل:",
+    loginRequired: "للوصول إلى هذه الميزة، يجب أن تكون مستخدمًا مسجلاً وموثقًا.", 
+    releaseDateRequiredForBeta: "تاريخ الإصدار مطلوب لوضع علامة 'مقالة تجريبية'.", 
+    noBetaArticles: "لا توجد مقالات تجريبية متاحة حاليًا.", 
+    createdBy: "تم الإنشاء بواسطة: ",
+  }
+};
+
+type Language = 'he' | 'en' | 'ar';
+type AuthState = {
+  isReady: boolean;
+  user: any;
+  userId: string | null;
+  isAuthenticated: boolean;
+  isRegistered: boolean; // TRUE אם המשתמש גם מאומת וגם יש לו תיעוד ב-users collection
+};
+type Page = 'home' | 'settings' | 'history' | 'register' | 'article' | 'beta' | 'edit' | 'create' | 'myarticles' | 'userarticles'; 
+type Gender = 'Male' | 'Female' | 'Other' | '';
+
+// --- מבנה האתר (סידור לפי נושאים וקטגוריות) ---
+// ********* שינוי קריטי לתוכן: הרחבת רשימת המשחקים (נושאים) *********
+const gameCategories = {
+  strategy: ['StarCraft II', 'Civilization VI', 'XCOM 2', 'Age of Empires II', 'Warcraft III', 'Crusader Kings III', 'Total War: Warhammer III'],
+  rpg: ['The Witcher 3', 'Final Fantasy XIV', 'Baldurs Gate 3', 'Diablo IV', 'Skyrim', 'Persona 5', 'Mass Effect'],
+  action: ['God of War', 'Elden Ring', 'Devil May Cry 5', 'Sekiro: Shadows Die Twice', 'Horizon Zero Dawn', 'Hades', 'Genshin Impact'],
+  shooter: ['Doom Eternal', 'CS:GO', 'Apex Legends', 'Call of Duty: Warzone', 'Destiny 2', 'Valorant', 'Halo Infinite'],
+  platformer: ['Celeste', 'Super Mario Odyssey', 'Hollow Knight', 'Ori and the Blind Forest', 'Rayman Legends', 'Shovel Knight', 'Cuphead'],
+  arcade: ['Pac-Man', 'Tetris', 'Donkey Kong', 'Galaga', 'Space Invaders', 'Street Fighter II', 'Frogger'],
+  simulation: ['The Sims 4', 'Microsoft Flight Sim', 'Stardew Valley', 'Factorio', 'Cities: Skylines II', 'Kerbal Space Program', 'Euro Truck Simulator 2'],
+};
+
+// --- קומפוננטת האפליקציה הראשית ---
+
+const App = () => {
+  const [lang, setLang] = useState<Language>('he');
+  const t = translations[lang];
+
+  const [authState, setAuthState] = useState<AuthState>({
+    isReady: false,
+    user: null,
+    userId: null,
+    isAuthenticated: false,
+    isRegistered: false, // TRUE אם המשתמש גם מאומת וגם יש לו תיעוד ב-users collection
+  });
+
+  const [currentPage, setCurrentPage] = useState<Page>('home');
+  const [currentArticle, setCurrentArticle] = useState<string | null>(null);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isTransparencyEnabled, setIsTransparencyEnabled] = useState(true); // שלב 2: פיצ'ר שקיפות כברירת מחדל
+  const [toastMessage, setToastMessage] = useState<{ msg: string, type: 'success' | 'error' } | null>(null);
+  const [articleData, setArticleData] = useState<any[]>([]);
+  const [userProfileMap, setUserProfileMap] = useState<{ [key: string]: string }>({}); // מפה לשמות משתמש
+
+  // 1. Firebase Auth and DB Setup
+  useEffect(() => {
+    // ********* תיקון קריטי 1: בדיקה אם Auth אותחל *********
+    if (!auth || !db) {
+        // אם Firebase לא אותחל, סמן כ-Ready (כדי שה-UI יעלה) וצא.
+        setAuthState(prev => ({ ...prev, isReady: true })); 
+        return;
+    }
+
+    let isSubscribed = true; // דגל למניעת עדכון מצב לאחר ה-unmount
+    
+    // פונקציית כניסה מאובטחת
+    const signIn = async () => {
+      try {
+        if (initialAuthToken) {
+          await signInWithCustomToken(auth, initialAuthToken);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (e) {
+        console.error("Firebase sign-in failed:", e);
+      }
+    };
+
+    signIn();
+
+    // Listener for Auth state changes
+    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
+      if (!isSubscribed) return; // מניעת עדכון מצב לא תקין
+
+      const userId = user?.uid || crypto.randomUUID();
+      const isAuthenticated = !!user;
+
+      let isRegistered = false;
+      if (isAuthenticated) {
+        try {
+          // בדיקת רישום משתמש בקולקציה הציבורית
+          const userDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', userId);
+          const userDoc = await getDoc(userDocRef);
+          isRegistered = userDoc.exists();
+        } catch (e) {
+          console.error("Error checking registration status:", e);
+        }
+      }
+
+      // שמירת המצב המלא: מאומת + רשום
+      setAuthState({
+        isReady: true,
+        user,
+        userId,
+        isAuthenticated,
+        isRegistered, // המשתנה הקריטי
+      });
+    });
+
+    return () => {
+        isSubscribed = false;
+        unsubscribeAuth();
+    };
+  }, []); // ריצה פעם אחת בלבד
+
+  // 2. Load Public Articles from Firestore
+  useEffect(() => {
+    // ********* תיקון קריטי 2: ודא ש-db קיים וש-Authstate מוכן *********
+    if (!db || !authState.isReady) return; 
+
+    // האזנה לקולקציית המאמרים הציבורית
+    const articlesColRef = collection(db, 'artifacts', appId, 'public', 'data', 'articles');
+    const unsubscribe = onSnapshot(articlesColRef, (snapshot) => {
+      const articles = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setArticleData(articles);
+    }, (error) => {
+      console.error("Error fetching articles:", error);
+    });
+
+    return () => unsubscribe();
+  }, [authState.isReady]); // תלוי במצב האתחול של המערכת (לא ב-db)
+  
+  // 3. Load User Profiles for Display Names
+  useEffect(() => {
+    if (!db || !authState.isReady) return;
+
+    // האזנה לקולקציית המשתמשים הציבורית כדי לקבל שמות משתמש
+    const usersColRef = collection(db, 'artifacts', appId, 'public', 'data', 'users');
+    const unsubscribe = onSnapshot(usersColRef, (snapshot) => {
+      const userMap: { [key: string]: string } = {};
+      snapshot.docs.forEach(doc => {
+        const data = doc.data();
+        // מפה: UID -> Username
+        userMap[doc.id] = data.username || doc.id; 
+      });
+      setUserProfileMap(userMap);
+    }, (error) => {
+      console.error("Error fetching user profiles:", error);
+    });
+
+    return () => unsubscribe();
+  }, [authState.isReady]);
+
+  // פונקציית עזר להצגת שם המשתמש
+  const getUsername = useCallback((userId: string | undefined): string => {
+    if (!userId) return 'אנונימי';
+    return userProfileMap[userId] || userId.substring(0, 8) + '...';
+  }, [userProfileMap]);
+
+  // פונקציית הצגת הודעה קופצת
+  const showToast = useCallback((msg: string, type: 'success' | 'error') => {
+    setToastMessage({ msg, type });
+    setTimeout(() => setToastMessage(null), 3000);
+  }, []);
+
+  // פונקציית ניווט + שמירת היסטוריית גלישה
+  const navigate = useCallback(async (page: Page, articleId: string | null = null) => {
+    // מניעת ניווט לעמודים מוגבלים אם המשתמש לא רשום
+    const restrictedPages: Page[] = ['myarticles', 'create', 'beta', 'userarticles'];
+    if (restrictedPages.includes(page) && !authState.isRegistered) {
+        showToast(t.loginRequired, 'error');
+        setCurrentPage('home'); // ניווט חזרה לעמוד הבית
+        setCurrentArticle(null);
+        return;
+    }
+
+    setCurrentPage(page);
+    setCurrentArticle(articleId);
+
+    if (!db) return; // הוספת בדיקה ל-db
+
+    if (authState.userId && page === 'article' && articleId) {
+      try {
+        const historyColRef = collection(db, 'artifacts', appId, 'users', authState.userId, 'history');
+        const articleRef = doc(db, 'artifacts', appId, 'public', 'data', 'articles', articleId);
+        const articleSnap = await getDoc(articleRef);
+
+        await addDoc(historyColRef, {
+          type: 'article',
+          title: articleSnap.data()?.title || articleId,
+          timestamp: new Date(),
+          articleId: articleId
+        });
+      } catch (e) {
+        console.warn("Failed to save browsing history:", e);
+      }
+    }
+  }, [authState.userId, authState.isRegistered, showToast, t, db]); // הוספת db לתלויות
+
+
+  // פונקציית חזרה לברירת מחדל (עברית)
+  const backToDefault = () => {
+    setLang('he');
+    localStorage.setItem('wikiLang', 'he');
+  };
+
+  // --- קומפוננטת Toast Message (חלון קופץ) ---
+  const Toast = useMemo(() => toastMessage ? (
+    <div className={`fixed top-4 left-1/2 transform -translate-x-1/2 p-4 rounded-lg shadow-2xl z-[100] transition-opacity duration-300 ${toastMessage.type === 'success' ? 'bg-green-500/80 text-white' : 'bg-red-500/80 text-white'} ${isTransparencyEnabled ? 'backdrop-blur-sm' : ''}`} style={{ direction: 'rtl' }}>
+      {toastMessage.msg}
+    </div>
+  ) : null, [toastMessage, isTransparencyEnabled]);
+
+
+  // --- קומפוננטת Glassmorphism Modal (חלון קופץ שקוף) ---
+  const GlassModal = ({ isOpen, onClose, children, title }: { isOpen: boolean, onClose: () => void, children: React.ReactNode, title: string }) => {
+    if (!isOpen) return null;
+
+    // שלב 3: החלת Glassmorphism על חלון קופץ
+    const styleClasses = isTransparencyEnabled
+      ? 'bg-white/70 backdrop-blur-md shadow-2xl border border-gray-100'
+      : 'bg-white shadow-xl';
+
+    return (
+      <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center p-4">
+        <div className={`w-full max-w-lg rounded-2xl p-6 transition-all duration-300 transform scale-100 ${styleClasses}`} style={{ direction: lang === 'ar' ? 'rtl' : 'ltr' }}>
+          <div className="flex justify-between items-center mb-4 pb-2 border-b border-gray-300">
+            <h2 className="text-2xl font-semibold text-gray-800">{title}</h2>
+            <button onClick={onClose} className="text-gray-600 hover:text-gray-900 transition-colors p-1 rounded-full hover:bg-gray-200">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+          <div className="max-h-[70vh] overflow-y-auto pr-2">
+            {children}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // --- קומפוננטת הירשם (שלב 7) ---
+  const RegistrationForm = () => {
+    const [email, setEmail] = useState('');
+    const [username, setUsername] = useState('');
+    const [dob, setDob] = useState('');
+    const [gender, setGender] = useState<Gender>('');
+    const [isLoading, setIsLoading] = useState(false);
+
+    const handleSubmit = async (e: React.FormEvent) => {
+      e.preventDefault();
+      // ********* תיקון קריטי: בדיקת שדות חובה *********
+      // חובה: email, username
+      // לא חובה: dob, gender
+      if (!email || !username) {
+        showToast(t.requiredField, 'error');
+        return;
+      }
+
+      // בדיקה אם המשתמש מאומת לפני הרישום
+      // ********* תיקון קריטי 3: בדיקה אם db קיים *********
+      if (!db || !authState.isAuthenticated || !authState.userId) { 
+        showToast(t.loginRequired, 'error');
+        return;
+      }
+
+      setIsLoading(true);
+      try {
+        // שמירת פרטי המשתמש בקולקציה הציבורית
+        const userDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', authState.userId);
+
+        await setDoc(userDocRef, {
+          email: email, // חובה
+          username: username, // חובה
+          dateOfBirth: dob, // לא חובה, נשמר אם קיים
+          gender: gender,   // לא חובה, נשמר אם קיים
+          registrationDate: new Date(),
+          uid: authState.userId,
+        });
+
+        setIsLoading(false);
+        showToast(t.registrationSuccess, 'success');
+        // ********* תיקון קריטי 4: עדכון מצב הרישום *********
+        // יש לעדכן את המצב בצורה אסינכרונית כדי ששאר הרכיבים יגיבו.
+        // התיקון הזה היה כבר קיים, מוודא שהוא נכון.
+        setAuthState(prev => ({ ...prev, isRegistered: true })); 
+        setIsSidebarOpen(true); // סגירת טופס הרישום
+        navigate('home');
+
+      } catch (error: any) { // תפיסת השגיאה כ-any
+        console.error("Registration error:", error);
+        setIsLoading(false);
+        showToast(`${t.registrationError} ${error.message}`, 'error');
+      }
+    };
+
+    return (
+      <form onSubmit={handleSubmit} className="space-y-4">
+        {/* אימייל - חובה */}
+        <input type="email" placeholder={t.email} value={email} onChange={(e) => setEmail(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 transition-shadow" />
+        
+        {/* שם משתמש - חובה */}
+        <input type="text" placeholder={t.username} value={username} onChange={(e) => setUsername(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 transition-shadow" />
+        
+        {/* תאריך לידה - לא חובה (הוסר required) */}
+        <input type="date" placeholder={t.dob} value={dob} onChange={(e) => setDob(e.target.value)} className="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 transition-shadow" />
+        
+        {/* מגדר - לא חובה (הוסר required) */}
+        <select value={gender} onChange={(e) => setGender(e.target.value as Gender)} className="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 bg-white">
+          <option value="">{t.gender}</option>
+          <option value="Male">זכר</option>
+          <option value="Female">נקבה</option>
+          <option value="Other">אחר</option>
+        </select>
+        
+        <button type="submit" disabled={isLoading} className="w-full bg-blue-600 text-white p-3 rounded-xl font-bold hover:bg-blue-700 transition-colors disabled:bg-blue-400 shadow-md hover:shadow-lg">
+          {isLoading ? '...טוען' : t.registerBtn}
+        </button>
+      </form>
+    );
+  };
+
+
+  // --- קומפוננטת עריכת מאמר (שלב 8 + פיצ'ר תאריך יציאה) ---
+  const ArticleEditor = ({ articleId }: { articleId: string | null }) => {
+    const isNew = articleId === 'new';
+    const existingArticle = articleData.find(a => a.id === articleId);
+    
+    // פונקציית עזר להמרת Firebase Timestamp לפורמט input date (YYYY-MM-DD)
+    const getInitialDate = (article: any) => {
+        if (article?.releaseDate?.toDate) {
+            return article.releaseDate.toDate().toISOString().substring(0, 10);
+        }
+        // טיפול במקרה שהתאריך הוא Date object (אם הגיע כך מזיכרון ה-State)
+        if (article?.releaseDate instanceof Date) {
+            return article.releaseDate.toISOString().substring(0, 10);
+        }
+        return '';
+    };
+
+    const [title, setTitle] = useState(isNew ? '' : existingArticle?.title || '');
+    const [content, setContent] = useState(isNew ? '' : existingArticle?.content || '');
+    const [category, setCategory] = useState(isNew ? 'strategy' : existingArticle?.category || 'strategy');
+    const [isBeta, setIsBeta] = useState(isNew ? false : existingArticle?.isBeta || false);
+    const [releaseDate, setReleaseDate] = useState(getInitialDate(existingArticle)); // NEW: תאריך יציאה
+    const [isLoading, setIsLoading] = useState(false);
+
+    // ********* שינוי קריטי: בדיקה אם המשתמש רשום *********
+    if (!authState.isRegistered) {
+      return <div className="p-4 bg-yellow-100 text-yellow-800 rounded-xl">{t.loginRequired}</div>;
+    }
+
+    const handleSave = async () => {
+      if (!title || !content) {
+        showToast(t.requiredField, 'error');
+        return;
+      }
+      
+      // ********* שינוי 2: בדיקת תלות - בטא מחייב תאריך יציאה *********
+      if (isBeta && !releaseDate) {
+        showToast(t.releaseDateRequiredForBeta, 'error');
+        return;
+      }
+      
+      if (!db || !authState.userId) { // הוספת בדיקה קריטית ל-db ו-userId
+          showToast(t.editError + " Firebase connection failed or user not authenticated.", 'error');
+          return;
+      }
+      
+      setIsLoading(true);
+
+      try {
+        const dataToSave = {
+          title: title,
+          content: content,
+          category: category,
+          isBeta: isBeta,
+          lastEditedBy: authState.userId,
+          lastEdited: new Date(),
+          // NEW: תאריך יציאה אופציונלי - נשמר כתאריך או כ-null אם ריק
+          releaseDate: releaseDate ? new Date(releaseDate) : null, 
+        };
+
+        if (isNew) {
+          // שימוש ב-addDoc כדי לתת ID חדש, הוספת שדה createdBy
+          await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'articles'), {
+            ...dataToSave,
+            createdBy: authState.userId, // NEW: שדה לזיהוי המשתמש שיצר את המאמר
+            createdAt: new Date(),
+          });
+        } else {
+          // עריכת מאמר קיים
+          const articleRef = doc(db, 'artifacts', appId, 'public', 'data', 'articles', articleId);
+          // setDoc עם merge: true ישמור את שדה createdBy המקורי
+          await setDoc(articleRef, dataToSave, { merge: true });
+        }
+
+        setIsLoading(false);
+        showToast(t.editSuccess, 'success');
+        navigate('article', articleId !== 'new' ? articleId : undefined); // ניווט למאמר שנערך או הביתה
+      } catch (error: any) { // תפיסת השגיאה כ-any
+        console.error("Save error:", error);
+        setIsLoading(false);
+        showToast(`${t.editError} ${error.message}`, 'error');
+      }
+    };
+
+    return (
+      <div className="space-y-6">
+        <h3 className="text-xl font-bold text-gray-800 border-b pb-2">{t.editModeHeader}</h3>
+
+        <input type="text" placeholder={t.articleTitle} value={title} onChange={(e) => setTitle(e.target.value)} required className="w-full p-3 text-2xl border-b-2 border-blue-300 focus:border-blue-600 outline-none transition-colors rounded-t-lg shadow-sm" />
+
+        <select value={category} onChange={(e) => setCategory(e.target.value)} className="w-full p-3 border border-gray-300 rounded-xl focus:ring-blue-500 focus:border-blue-500 bg-white shadow-sm">
+          {Object.keys(gameCategories).map(cat => (
+            <option key={cat} value={cat}>{t[cat] || cat}</option>
+          ))}
+        </select>
+        
+        {/* NEW: קלט תאריך יציאה אופציונלי */}
+        <div>
+          <label htmlFor="releaseDate" className="block text-sm font-medium text-gray-700 mb-1">{t.releaseDate}</label>
+          <input type="date" id="releaseDate" value={releaseDate} onChange={(e) => setReleaseDate(e.target.value)} className="w-full md:w-1/2 p-3 border border-gray-300 rounded-xl focus:ring-blue-500 focus:border-blue-500 bg-white shadow-sm" />
+        </div>
+
+        <textarea placeholder={t.articleContent} value={content} onChange={(e) => setContent(e.target.value)} required className="w-full h-96 p-4 border border-gray-300 rounded-xl focus:ring-blue-500 focus:border-blue-500 shadow-inner resize-none"></textarea>
+
+        <div className="flex items-center space-x-2" style={{ direction: 'ltr' }}>
+          {/* שינוי 2: הוספת תלות בין isBeta ל-releaseDate ב-UI (כפתור מנוטרל אם אין תאריך) */}
+          <input 
+            type="checkbox" 
+            id="isBeta" 
+            checked={isBeta} 
+            onChange={(e) => setIsBeta(e.target.checked)} 
+            className="h-5 w-5 text-blue-600 rounded" 
+            // ניתן להוסיף disabled={!releaseDate} אם רוצים לחסום ב-UI אבל העיקר הוא ב-handleSave
+          />
+          <label htmlFor="isBeta" className="text-gray-700 font-medium">{t.betaArticles}</label>
+          {/* הוספת הודעה אם תאריך חובה לבטא */}
+          {!releaseDate && isBeta && (
+            <span className="text-red-500 text-sm">{t.releaseDateRequiredForBeta}</span>
+          )}
+        </div>
+
+        <button onClick={handleSave} disabled={isLoading} className="w-full bg-green-600 text-white p-3 rounded-xl font-bold hover:bg-green-700 transition-colors disabled:bg-green-400 shadow-md hover:shadow-lg">
+          {isLoading ? '...שומר' : t.save}
+        </button>
+      </div>
+    );
+  };
+  
+  // --- קומפוננטת המאמרים שלי ---
+  const MyArticlesView = () => {
+    // ********* שינוי קריטי: בדיקה אם המשתמש רשום *********
+    if (!authState.isRegistered) {
+      return <div className="p-6 bg-red-100 text-red-800 rounded-xl font-bold">{t.loginRequired}</div>;
+    }
+    
+    // סינון המאמרים שנוצרו על ידי המשתמש הנוכחי
+    const myArticles = articleData.filter(a => a.createdBy === authState.userId);
+
+    return (
+      <div className="space-y-6">
+        <h2 className="text-3xl font-bold text-indigo-800 border-b pb-2">{t.myArticles}</h2>
+        
+        {myArticles.length === 0 ? (
+          <div className="p-6 bg-gray-50 text-gray-600 rounded-xl border border-dashed border-gray-300">
+            <p className="text-xl font-semibold">{t.noMyArticles}</p>
+          </div>
+        ) : (
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {myArticles.map(article => (
+              <div key={article.id} className="bg-white p-6 rounded-2xl shadow-lg border border-indigo-200 hover:shadow-xl transition-shadow cursor-pointer" onClick={() => navigate('article', article.id)}>
+                <p className="text-xs font-semibold uppercase text-blue-500 mb-1">{t[article.category] || article.category}</p>
+                <h3 className="text-xl font-bold text-gray-800 mb-2 truncate">{article.title}</h3>
+                <p className="text-gray-600 text-sm line-clamp-3">{article.content.substring(0, 100)}...</p>
+                <p className="text-sm mt-2 font-medium text-gray-500">
+                    {t.createdBy} <span className="font-bold text-gray-700">{getUsername(article.createdBy)}</span>
+                    <span className="block text-xs">תאריך יציאה: <span className={article.releaseDate ? 'text-green-600' : 'text-red-500'}>
+                        {formatDate(article.releaseDate, lang)}
+                    </span></span>
+                    {/* הצגת תווית בטא אם מסומן */}
+                    {article.isBeta && <span className="ml-2 px-2 py-0.5 text-xs font-bold text-purple-700 bg-purple-100 rounded-full">בטא</span>}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+  
+  // --- NEW: קומפוננטת מאמרי משתמשים ---
+  const UserArticlesView = () => {
+    // ********* שינוי קריטי: בדיקה אם המשתמש רשום *********
+    if (!authState.isRegistered) {
+      return <div className="p-6 bg-red-100 text-red-800 rounded-xl font-bold">{t.loginRequired}</div>;
+    }
+    
+    const now = new Date();
+    
+    // ********* שינוי 3: לוגיקת סינון ל"מאמרי משתמשים" *********
+    // מאמר משתמש מוצג אם:
+    // 1. יש לו יוצר (createdBy - כי רק מאמרים עם יוצר הם מאמרי משתמשים).
+    // 2. הוא *אינו* מאמר בטא.
+    // 3. או - אם הוא מאמר בטא, אבל תאריך היציאה שלו *עבר* (או שווה להיום).
+    const userArticles = articleData.filter(a => {
+      // חובה שיהיה יוצר כדי להיחשב "מאמר משתמש"
+      if (!a.createdBy) return false; 
+      
+      // אם זה לא מאמר בטא, הוא מוצג
+      if (!a.isBeta) return true;
+      
+      // אם זה מאמר בטא: הוא מוצג רק אם יש תאריך יציאה וגם התאריך עבר
+      if (a.isBeta && a.releaseDate) {
+        const releaseDateObj = a.releaseDate.toDate ? a.releaseDate.toDate() : new Date(a.releaseDate);
+        return releaseDateObj <= now;
+      }
+      
+      // כל מקרה אחר (בטא בלי תאריך יציאה שחלף) לא מוצג
+      return false;
+    });
+
+    return (
+      <div className="space-y-6">
+        <h2 className="text-3xl font-bold text-green-800 border-b pb-2">{t.userArticles}</h2>
+        
+        {userArticles.length === 0 ? (
+          <div className="p-6 bg-gray-50 text-gray-600 rounded-xl border border-dashed border-gray-300">
+            <p className="text-xl font-semibold">{t.noUserArticles}</p>
+          </div>
+        ) : (
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {userArticles.map(article => (
+              <div key={article.id} className="bg-white p-6 rounded-2xl shadow-lg border border-green-200 hover:shadow-xl transition-shadow cursor-pointer" onClick={() => navigate('article', article.id)}>
+                <p className="text-xs font-semibold uppercase text-blue-500 mb-1">{t[article.category] || article.category}</p>
+                <h3 className="text-xl font-bold text-gray-800 mb-2 truncate">{article.title}</h3>
+                <p className="text-gray-600 text-sm line-clamp-3">{article.content.substring(0, 100)}...</p>
+                <p className="text-sm mt-2 font-medium text-gray-500">
+                    {t.createdBy} <span className="font-bold text-gray-700">{getUsername(article.createdBy)}</span>
+                    {/* הצגת תאריך יציאה (אם היה) */}
+                    {article.releaseDate && <span className="block text-xs text-green-600">פורסם בתאריך: {formatDate(article.releaseDate, lang)}</span>}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+
+  // --- קומפוננטת תפריט צדדי (שלב 5) ---
+  const SideMenu = ({ toggleMenu }: { toggleMenu: () => void }) => {
+    // שלב 3: החלת Glassmorphism על חלונית צידית
+    const styleClasses = isTransparencyEnabled
+      ? 'bg-white/70 backdrop-blur-md border-l border-gray-100'
+      : 'bg-white shadow-xl';
+
+    const menuItems = [
+      { key: 'home', label: t.home, icon: '🏠' },
+      { key: 'history', label: t.history, icon: '⏱️' },
+      // ********* שינוי 4: הוספת 'מאמרי משתמשים' *********
+      ...(authState.isRegistered ? [
+        { key: 'userarticles', label: t.userArticles, icon: '⭐' }, // מאמרי משתמשים
+        { key: 'myarticles', label: t.myArticles, icon: '📝' }, // המאמרים שלי
+        { key: 'create', label: t.createArticle, icon: '✍️' }, // צור מאמר חדש
+        { key: 'beta', label: t.betaArticles, icon: '🧪' }, // מאמרי בטא
+      ] : []),
+      { key: 'settings', label: t.settings, icon: '⚙️' },
+      ...(!authState.isRegistered ? [{ key: 'register', label: t.register, icon: '📝' }] : []),
+    ];
+
+    return (
+      <div className={`fixed inset-y-0 ${lang === 'ar' ? 'right-0' : 'left-0'} w-64 z-40 transform ${isSidebarOpen ? 'translate-x-0' : (lang === 'ar' ? 'translate-x-full' : '-translate-x-full')} transition-transform duration-300 ${styleClasses} p-4 flex flex-col`} style={{ direction: lang === 'ar' ? 'rtl' : 'ltr' }}>
+        {/* תיקון השגיאה: הסרת הסגירה הכפולה של התגית h1 והוספת סוגר מסולסל ל-className */}
+        <h1 className="text-3xl font-extrabold text-blue-600 mb-6 flex justify-between items-center">
+          {t.appTitle}
+          <button onClick={toggleMenu} className="text-gray-600 hover:text-gray-900 transition-colors p-1 rounded-full hover:bg-gray-200">
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </h1>
+
+        {/* קישורי ניווט כלליים */}
+        <div className="space-y-2 border-b pb-4 mb-4 border-gray-200">
+          {menuItems.map(item => (
+            <button key={item.key} onClick={() => navigate(item.key as Page)} className={`flex items-center w-full p-3 rounded-xl transition-colors font-medium text-lg shadow-sm ${currentPage === item.key ? 'bg-blue-500 text-white' : 'bg-gray-100 hover:bg-gray-200 text-gray-800'}`}>
+              <span className="mr-3 ml-3">{item.icon}</span>
+              {item.label}
+            </button>
+          ))}
+        </div>
+
+        {/* סידור לפי נושאים וקטגוריות (שלב 4, 5) */}
+        <div className="flex flex-col flex-grow overflow-y-auto space-y-4">
+          <h3 className="text-xl font-bold text-gray-700">{t.games}</h3>
+          {Object.entries(gameCategories).map(([categoryKey, articles]) => (
+            <div key={categoryKey} className="space-y-1">
+              <p className="text-lg font-semibold text-gray-600 px-2 py-1 rounded-lg bg-gray-50">{t[categoryKey] || categoryKey}</p>
+              <ul className="pl-4 border-l-2 border-blue-300">
+                {articles.map(articleTitle => {
+                  // סינון מאמרי בטא - הצג רק אם יש תאריך יציאה ומשתמש רשום
+                  const article = articleData.find(a => 
+                    a.title === articleTitle && (
+                      !a.isBeta || 
+                      (authState.isRegistered && a.releaseDate)
+                    )
+                  );
+                  return (
+                    <li key={articleTitle}>
+                      <button onClick={() => navigate('article', article?.id)} className="text-gray-700 hover:text-blue-600 transition-colors text-sm py-1 w-full text-start truncate">
+                        {articleTitle}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  // --- קומפוננטת הגדרות (שלב 2, 3, נוסף) ---
+  const SettingsPanel = () => {
+    return (
+      <div className="space-y-6">
+        {/* הגדרות שקיפות (בטא) */}
+        <div className="p-4 rounded-xl bg-gray-50 shadow-inner">
+          <h3 className="text-xl font-bold text-gray-700 mb-2 border-b pb-1">{t.transparencyBeta}</h3>
+          <p className="text-gray-600 mb-3 text-sm">
+            {t.notImplemented}
+          </p>
+          <div className="flex items-center space-x-2" style={{ direction: 'ltr' }}>
+            <input
+              type="checkbox"
+              id="transparencyToggle"
+              checked={isTransparencyEnabled}
+              onChange={(e) => setIsTransparencyEnabled(e.target.checked)}
+              className="h-5 w-5 text-blue-600 rounded focus:ring-blue-500"
+            />
+            <label htmlFor="transparencyToggle" className="text-gray-700 font-medium">
+              {t.transparencyBeta}
+            </label>
+          </div>
+        </div>
+
+        {/* הגדרות שפה */}
+        <div className="p-4 rounded-xl bg-gray-50 shadow-inner">
+          <h3 className="text-xl font-bold text-gray-700 mb-2 border-b pb-1">שפה / Language / لغة</h3>
+          <div className="flex space-x-4">
+            <button onClick={() => setLang('he')} className={`p-2 rounded-lg font-semibold ${lang === 'he' ? 'bg-blue-600 text-white' : 'bg-white text-gray-800 border'}`}>עברית</button>
+            <button onClick={() => setLang('en')} className={`p-2 rounded-lg font-semibold ${lang === 'en' ? 'bg-blue-600 text-white' : 'bg-white text-gray-800 border'}`}>English</button>
+            <button onClick={() => setLang('ar')} className={`p-2 rounded-lg font-semibold ${lang === 'ar' ? 'bg-blue-600 text-white' : 'bg-white text-gray-800 border'}`}>العربية</button>
+          </div>
+          <button onClick={backToDefault} className="mt-4 p-2 w-full bg-yellow-500 text-white rounded-xl font-bold hover:bg-yellow-600 transition-colors shadow-md">
+            {t.backToDefault}
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  // --- קומפוננטת היסטוריית גלישה (שלב אחרון) ---
+  const BrowsingHistory = () => {
+    const [history, setHistory] = useState<any[]>([]);
+
+    useEffect(() => {
+      // ********* תיקון קריטי 5: ודא ש-db קיים וש-userId קיים *********
+      if (!db || !authState.userId) return; 
+
+      // קבלת היסטוריית גלישה פרטית
+      const historyColRef = collection(db, 'artifacts', appId, 'users', authState.userId, 'history');
+      // שאילתה פשוטה שמביאה את 10 הפריטים האחרונים
+      const unsubscribe = onSnapshot(historyColRef, (snapshot) => {
+        const historyData = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data(),
+          timestamp: doc.data().timestamp?.toDate() || new Date(0) // המרת Timestamp ל-Date
+        })).sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime()); // מיון מהחדש לישן
+        setHistory(historyData.slice(0, 10)); // הצגת 10 אחרונים בלבד
+      }, (error) => {
+        console.error("Error fetching history:", error);
+      });
+
+      return () => unsubscribe();
+    }, [authState.userId]); // תלוי רק במצב המשתמש
+
+    return (
+      <div className="space-y-4">
+        <h3 className="text-2xl font-bold text-gray-800 border-b pb-2">{t.viewHistoryTitle}</h3>
+        {history.length === 0 ? (
+          <p className="text-gray-600">{t.noHistory}</p>
+        ) : (
+          <ul className="space-y-2">
+            {history.map((item) => (
+              <li key={item.id} className="p-3 bg-white border border-gray-200 rounded-xl shadow-sm hover:shadow-md transition-shadow flex justify-between items-center">
+                <span className="font-semibold text-gray-700">{item.title}</span>
+                <span className="text-sm text-gray-500">{item.timestamp.toLocaleString(lang)}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    );
+  };
+
+
+  // --- קומפוננטת הצגת מאמרים ---
+  const ArticleView = ({ articleId }: { articleId: string | null }) => {
+    const article = articleData.find(a => a.id === articleId);
+
+    if (!article) {
+      return <div className="text-center p-8 text-gray-600">המאמר לא נמצא או נמחק.</div>;
+    }
+
+    // ********* שינוי 5: בדיקה משולשת למאמרי בטא *********
+    // מאמר בטא גלוי רק אם: 1. המשתמש רשום, ו- 2. נקבע לו תאריך יציאה (releaseDate)
+    const isBetaAndHidden = article.isBeta && (!authState.isRegistered || !article.releaseDate);
+
+    if (isBetaAndHidden) {
+        return <div className="p-4 bg-red-100 text-red-800 rounded-xl font-bold">{t.loginRequired}</div>;
+    }
+
+    // המשתמשים הרשומים יכולים לערוך
+    const canEdit = authState.isRegistered;
+
+    return (
+      <div className="space-y-6">
+        <div className="flex justify-between items-start border-b pb-4 mb-4">
+          <h2 className="text-4xl font-extrabold text-gray-900">{article.title}</h2>
+          {canEdit && (
+            <button onClick={() => navigate('edit', article.id)} className="flex items-center bg-yellow-500 text-white p-2 rounded-xl font-bold hover:bg-yellow-600 transition-colors shadow-md text-sm">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L15.232 5.232z" />
+              </svg>
+              {t.editArticle}
+            </button>
+          )}
+        </div>
+
+        {article.isBeta && <div className="p-2 bg-purple-100 text-purple-800 rounded-xl font-bold">{t.betaArticles}</div>}
+
+        <p className="text-lg text-gray-700 whitespace-pre-line">{article.content}</p>
+
+        {/* הצגת תאריך יציאה אם קיים */}
+        {article.releaseDate && (
+            <div className="text-base text-gray-700 font-semibold p-3 bg-blue-50 rounded-lg">
+                <span className="text-blue-600">תאריך יציאה מתוכנן:</span> {formatDate(article.releaseDate, lang)}
+            </div>
+        )}
+
+        <div className="text-sm text-gray-500 border-t pt-4">
+          <p>{t.categoryTitle}{t[article.category] || article.category}</p>
+          <p>עודכן לאחרונה: {article.lastEdited ? new Date(article.lastEdited.seconds * 1000).toLocaleString(lang) : 'N/A'}</p>
+          <p>{t.createdBy} <span className="text-gray-700 font-semibold">{getUsername(article.createdBy)}</span></p>
+        </div>
+      </div>
+    );
+  };
+
+
+  // --- תוכן ראשי (מרכז האתר) ---
+  const MainContent = () => {
+    // הצגת מסך טעינה אם המערכת לא מוכנה
+    if (!authState.isReady) {
+        return <div className="text-center p-16 text-gray-500 font-semibold">טוען... ממתין לאימות Firebase.</div>;
+    }
+      
+    switch (currentPage) {
+      case 'home':
+        // שלב 6: הצגת מאמרים לדוגמה בעמוד הבית
+        // ********* שינוי 6: סינון מאמרי בטא בעמוד הבית - גלויים רק אם יש תאריך יציאה *********
+        const homeArticles = articleData.filter(a => 
+            !a.isBeta || a.releaseDate
+        );
+
+        return (
+          <div className="space-y-8">
+            <h2 className="text-3xl font-bold text-gray-800 border-b pb-2">{t.welcome} {t.appTitle}</h2>
+            {/* ********* שינוי תוכן: הוספת תיאור הנושאים הכללי ********* */}
+            <p className="text-lg text-gray-700 p-4 bg-gray-50 rounded-xl border border-gray-200">
+                {t.homeDescription}
+            </p>
+
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {homeArticles.map(article => (
+                <div key={article.id} className="bg-white p-6 rounded-2xl shadow-lg border border-gray-100 hover:shadow-xl transition-shadow cursor-pointer" onClick={() => navigate('article', article.id)}>
+                  <p className="text-xs font-semibold uppercase text-blue-500 mb-1">{t[article.category] || article.category}</p>
+                  <h3 className="text-xl font-bold text-gray-800 mb-2 truncate">{article.title}</h3>
+                  <p className="text-gray-600 text-sm line-clamp-3">{article.content.substring(0, 100)}...</p>
+                  {/* סימון אם זה מאמר בטא עם תאריך יציאה */}
+                  {article.isBeta && article.releaseDate && <span className="mt-2 block px-2 py-0.5 text-xs font-bold text-purple-700 bg-purple-100 rounded-full w-fit">בטא</span>}
+                </div>
+              ))}
+            </div>
+            <div className="p-6 bg-blue-50 rounded-xl text-blue-800">
+                <p>
+                    זהו אתר הדגמה המכיל תוכן גנרי. משתמשים מאומתים ורשומים יכולים לערוך וליצור מאמרים משלהם דרך כפתור "{t.createArticle}".
+                </p>
+                <p className="mt-2 text-sm font-semibold">
+                    זהות המשתמש הנוכחית (UID): {authState.userId || 'טוען...'}
+                </p>
+            </div>
+          </div>
+        );
+      case 'settings':
+        return <SettingsPanel />;
+      case 'history':
+        return <BrowsingHistory />;
+      case 'myarticles': 
+        // ********* שינוי קריטי: בדיקה אם המשתמש רשום *********
+        if (!authState.isRegistered) return <div className="p-6 bg-red-100 text-red-800 rounded-xl font-bold">{t.loginRequired}</div>;
+        return <MyArticlesView />;
+      case 'userarticles': // ********* שינוי 7: הוספת ניווט לעמוד החדש *********
+        if (!authState.isRegistered) return <div className="p-6 bg-red-100 text-red-800 rounded-xl font-bold">{t.loginRequired}</div>;
+        return <UserArticlesView />;
+      case 'register':
+        return authState.isRegistered ? (
+          <div className="p-6 bg-green-100 text-green-800 rounded-xl">אתה כבר רשום!</div>
+        ) : (
+          <RegistrationForm />
+        );
+      case 'article':
+        return <ArticleView articleId={currentArticle} />;
+      case 'edit':
+        // ********* שינוי קריטי: בדיקה אם המשתמש רשום *********
+        if (!authState.isRegistered) return <div className="p-4 bg-yellow-100 text-yellow-800 rounded-xl">{t.loginRequired}</div>;
+        return <ArticleEditor articleId={currentArticle} />;
+      case 'create':
+        // ********* שינוי קריטי: בדיקה אם המשתמש רשום *********
+        if (!authState.isRegistered) return <div className="p-4 bg-yellow-100 text-yellow-800 rounded-xl">{t.loginRequired}</div>;
+        return <ArticleEditor articleId={'new'} />;
+      case 'beta':
+        // ********* שינוי קריטי: בדיקה אם המשתמש רשום *********
+        if (!authState.isRegistered) {
+          return <div className="p-6 bg-red-100 text-red-800 rounded-xl font-bold">{t.loginRequired}</div>;
+        }
+        
+        // ********* שינוי 8: סינון מאמרי בטא - רק אם יש תאריך יציאה וטרם הגיע *********
+        const now = new Date();
+        const betaArticlesFiltered = articleData.filter(a => {
+            if (!a.isBeta) return false;
+            // אם יש תאריך יציאה וטרם חלף
+            if (a.releaseDate) {
+                const releaseDateObj = a.releaseDate.toDate ? a.releaseDate.toDate() : new Date(a.releaseDate);
+                return releaseDateObj > now; // מציג רק מאמרים שעתידים להתפרסם
+            }
+            return true; // מציג מאמרי בטא בלי תאריך יציאה (לצורך עריכה/בדיקה)
+        });
+
+        return (
+          <div className="space-y-6">
+            <h2 className="text-3xl font-bold text-purple-800 border-b pb-2">{t.betaArticles}</h2>
+            <p className="text-gray-600">{t.betaInfo}</p>
+            <div className="grid md:grid-cols-2 gap-4">
+              {betaArticlesFiltered.map(article => (
+                <div key={article.id} className="bg-purple-50 p-4 rounded-xl shadow-lg border border-purple-200 hover:shadow-xl transition-shadow cursor-pointer" onClick={() => navigate('article', article.id)}>
+                  <h3 className="text-xl font-bold text-purple-700 mb-1 truncate">{article.title}</h3>
+                  <p className="text-gray-600 text-sm line-clamp-2">{article.content.substring(0, 80)}...</p>
+                  <p className="text-xs font-medium text-gray-500 mt-2">
+                    תאריך יציאה: <span className="font-semibold">{formatDate(article.releaseDate, lang)}</span>
+                  </p>
+                </div>
+              ))}
+              {betaArticlesFiltered.length === 0 && <p className="text-gray-500">{t.noBetaArticles}</p>}
+            </div>
+          </div>
+        );
+      default:
+        return <div className="p-8 text-center text-red-500">שגיאה: עמוד לא קיים.</div>;
+    }
+  };
+
+
+  // --- קומפוננטת הכותרת העליונה (שלב 1) ---
+  const Header = () => {
+    // שלב 3: החלת Glassmorphism על גלילה (Header הוא fixed, ירוץ כל הזמן)
+    const styleClasses = isTransparencyEnabled
+      ? 'bg-white/70 backdrop-blur-sm shadow-md border-b border-gray-100'
+      : 'bg-white shadow-md border-b border-gray-200';
+
+    const loginButton = authState.isRegistered ? (
+      <span className="text-sm font-semibold text-gray-700">
+        {t.loggedInAs} {authState.userId ? getUsername(authState.userId) : 'טוען...'}
+      </span>
+    ) : (
+      // ********* שינוי קריטי: כפתור הכניסה מוביל לטופס הרישום *********
+      <button onClick={() => navigate('register')} className="bg-blue-600 text-white text-sm font-semibold py-2 px-4 rounded-xl hover:bg-blue-700 transition-colors shadow-lg">
+        {t.login}
+      </button>
+    );
+
+
+    return (
+      <header className={`fixed top-0 ${lang === 'ar' ? 'right-0' : 'left-0'} w-full z-30 transition-all duration-300 ${isSidebarOpen ? (lang === 'ar' ? 'pl-64' : 'pr-64') : 'px-4'} ${styleClasses}`} style={{ direction: lang === 'ar' ? 'rtl' : 'ltr' }}>
+        <div className="flex justify-between items-center h-16 max-w-7xl mx-auto">
+          {/* כפתור פתיחת תפריט */}
+          <button onClick={() => setIsSidebarOpen(prev => !prev)} className="text-gray-600 hover:text-gray-900 transition-colors p-2 rounded-full hover:bg-gray-200">
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          </button>
+          <div className="flex items-center space-x-4" style={{ direction: 'ltr' }}>
+            {/* כפתור כניסה לחשבון */}
+            {loginButton}
+            {/* כפתור הגדרות */}
+            <button onClick={() => setIsSettingsOpen(true)} className="text-gray-600 hover:text-blue-600 transition-colors p-2 rounded-full hover:bg-gray-200">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.942 3.313.823 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.942 1.543-.823 3.313-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.942-3.313-.823-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.942-1.543.823-3.313 2.37-2.37.525.292 1.2.292 1.725 0z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </header>
+    );
+  };
+
+
+  // --- הרצת האפליקציה ---
+  return (
+    // שלב 1: רקע בסגנון משחקי מחשב ו-Windows 11
+    <div className={`min-h-screen transition-all duration-300 ${lang === 'ar' ? 'rtl' : 'ltr'}`} style={{
+      direction: lang === 'ar' ? 'rtl' : 'ltr',
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji"',
+      backgroundColor: '#f3f4f6', // Light gray background (One UI / Win 11 style)
+      backgroundImage: `url('https://placehold.co/1920x1080/0f172a/ffffff/png?text=Gaming+Wiki+Background')`,
+      backgroundSize: 'cover',
+      backgroundAttachment: 'fixed'
+    }}>
+      {/* תפריט צדדי (שלב 5) */}
+      <SideMenu toggleMenu={() => setIsSidebarOpen(prev => !prev)} />
+
+      {/* שכבת כותרת עליונה */}
+      <Header />
+
+      {/* אזור תוכן ראשי */}
+      <main className={`transition-all duration-300 pt-16 ${isSidebarOpen ? (lang === 'ar' ? 'mr-64' : 'ml-64') : (lang === 'ar' ? 'mr-4' : 'ml-4')} max-w-7xl mx-auto p-4`}>
+        <div className="bg-white/95 p-8 rounded-3xl shadow-2xl min-h-[calc(100vh-80px)] border border-gray-100">
+          <MainContent />
+        </div>
+      </main>
+
+      {/* חלון קופץ - הגדרות (שלב 2) */}
+      <GlassModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} title={t.settings}>
+        <SettingsPanel />
+      </GlassModal>
+
+      {/* הודעות קופצות */}
+      {Toast}
+      
+      {/* שכבה שקופה למקרה שהתפריט סגור - לטאבלטים וניידים */}
+      {!isSidebarOpen && (
+        <div onClick={() => setIsSidebarOpen(true)} className="fixed inset-0 bg-black/50 z-30 md:hidden"></div>
+      )}
+    </div>
+  );
+};
+
+export default App;
+
